@@ -1,4 +1,14 @@
 #include "VulkanRenderer.h"
+#include <QVulkanDeviceFunctions>
+
+
+
+
+static const Vertex vertices[] = {
+    {{0.0f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}},
+    {{0.5f, 0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}},
+    {{-0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}},
+    };
 
 VulkanRenderer::VulkanRenderer(QVulkanWindow *window) : m_window(window) {
     // 初始化Vulkan资源
@@ -8,114 +18,141 @@ VulkanRenderer::VulkanRenderer(QVulkanWindow *window) : m_window(window) {
 
 void VulkanRenderer::initResources()
 {
-    // 1. 初始化 Vulkan 实例
-    VkApplicationInfo appInfo = {};
-    appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    appInfo.pApplicationName = "Qt Vulkan Triangle Example";
-    appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.pEngineName = "No Engine";
-    appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
-    appInfo.apiVersion = VK_API_VERSION_1_2;
+    QVulkanDeviceFunctions *devFuncs = m_window->vulkanInstance()->deviceFunctions(m_window->device());
 
-    VkInstanceCreateInfo createInfo = {};
-    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-    createInfo.pApplicationInfo = &appInfo;
+    // 创建顶点缓冲区
+    VkBufferCreateInfo bufferInfo = {};
+    bufferInfo.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    bufferInfo.size = sizeof(vertices);
+    bufferInfo.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT;
+    bufferInfo.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 
-    // 需要启用扩展
-    uint32_t extensionCount = 0;
-    const char** extensions = glfwGetRequiredInstanceExtensions(&extensionCount);
-    createInfo.enabledExtensionCount = extensionCount;
-    createInfo.ppEnabledExtensionNames = extensions;
-
-    // 创建 Vulkan 实例
-    if (vkCreateInstance(&createInfo, nullptr, &m_instance) != VK_SUCCESS) {
-        qFatal("failed to create Vulkan instance!");
+    if (devFuncs->vkCreateBuffer(m_window->device(), &bufferInfo, nullptr, &m_vertexBuffer) != VK_SUCCESS) {
+        qFatal("Failed to create vertex buffer.");
     }
 
-    // 2. 创建 Vulkan 设备和队列
-    VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
-    uint32_t deviceCount = 0;
-    vkEnumeratePhysicalDevices(m_instance, &deviceCount, nullptr);
-    if (deviceCount == 0) {
-        qFatal("failed to find a GPU with Vulkan support!");
-    }
-    std::vector<VkPhysicalDevice> devices(deviceCount);
-    vkEnumeratePhysicalDevices(m_instance, &deviceCount, devices.data());
+    // 获取内存需求
+    VkMemoryRequirements memRequirements;
+    devFuncs->vkGetBufferMemoryRequirements(m_window->device(), m_vertexBuffer, &memRequirements);
 
-    physicalDevice = devices[0];  // 选择第一个设备
-    VkDeviceCreateInfo deviceCreateInfo = {};
-    deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    deviceCreateInfo.queueCreateInfoCount = 1;
+    // 分配内存
+    VkMemoryAllocateInfo allocInfo = {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    allocInfo.allocationSize = memRequirements.size;
+    allocInfo.memoryTypeIndex = m_window->hostVisibleMemoryIndex();
 
-    VkDeviceQueueCreateInfo queueCreateInfo = {};
-    queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-    queueCreateInfo.queueCount = 1;
-    queueCreateInfo.pQueuePriorities = (float[])1.0f;
-
-    deviceCreateInfo.pQueueCreateInfos = &queueCreateInfo;
-
-    if (vkCreateDevice(physicalDevice, &deviceCreateInfo, nullptr, &m_device) != VK_SUCCESS) {
-        qFatal("failed to create Vulkan device!");
+    if (devFuncs->vkAllocateMemory(m_window->device(), &allocInfo, nullptr, &m_vertexBufferMemory) != VK_SUCCESS) {
+        qFatal("Failed to allocate vertex buffer memory.");
     }
 
-    vkGetDeviceQueue(m_device, 0, 0, &m_graphicsQueue);
+    // 绑定内存
+    devFuncs->vkBindBufferMemory(m_window->device(), m_vertexBuffer, m_vertexBufferMemory, 0);
+
+    // 填充顶点数据
+    void *data;
+    devFuncs->vkMapMemory(m_window->device(), m_vertexBufferMemory, 0, bufferInfo.size, 0, &data);
+    memcpy(data, vertices, (size_t)bufferInfo.size);
+    devFuncs->vkUnmapMemory(m_window->device(), m_vertexBufferMemory);
+
+    // 创建图形管线
+    VkPipelineLayoutCreateInfo pipelineLayoutInfo = {};
+    pipelineLayoutInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+
+    if (devFuncs->vkCreatePipelineLayout(m_window->device(), &pipelineLayoutInfo, nullptr, &m_pipelineLayout) != VK_SUCCESS) {
+        qFatal("Failed to create pipeline layout.");
+    }
+
+    // 管线配置（着色器模块等）
+    // 需要加载编译好的 SPIR-V 着色器文件（vertex 和 fragment shader）
+    // 示例中略去详细加载代码
+}
+
+void VulkanRenderer::initSwapChainResources()
+{
+
+}
+
+void VulkanRenderer::releaseSwapChainResources()
+{
+
 }
 
 void VulkanRenderer::releaseResources()
 {
-    vkDestroyDevice(m_device, nullptr);
-    vkDestroyInstance(m_instance, nullptr);
+    QVulkanDeviceFunctions *devFuncs = m_window->vulkanInstance()->deviceFunctions(m_window->device());
+
+    if (m_pipeline != VK_NULL_HANDLE) {
+        devFuncs->vkDestroyPipeline(m_window->device(), m_pipeline, nullptr);
+        m_pipeline = VK_NULL_HANDLE;
+    }
+
+    if (m_pipelineLayout != VK_NULL_HANDLE) {
+        devFuncs->vkDestroyPipelineLayout(m_window->device(), m_pipelineLayout, nullptr);
+        m_pipelineLayout = VK_NULL_HANDLE;
+    }
+
+    if (m_vertexBuffer != VK_NULL_HANDLE) {
+        devFuncs->vkDestroyBuffer(m_window->device(), m_vertexBuffer, nullptr);
+        m_vertexBuffer = VK_NULL_HANDLE;
+    }
+
+    if (m_vertexBufferMemory != VK_NULL_HANDLE) {
+        devFuncs->vkFreeMemory(m_window->device(), m_vertexBufferMemory, nullptr);
+        m_vertexBufferMemory = VK_NULL_HANDLE;
+    }
 }
 
 void VulkanRenderer::startNextFrame()
 {
-    // 2. 每帧开始时调用，用来开始下一帧的渲染。
-    // 在此处，通常需要处理交换链、渲染目标等。
+    QVulkanDeviceFunctions *devFuncs = m_window->vulkanInstance()->deviceFunctions(m_window->device());
+    VkCommandBuffer cmdBuffer = m_window->currentCommandBuffer();
 
-    // 创建命令缓冲区并记录绘制命令
-    VkCommandBuffer commandBuffer;
-    VkCommandBufferAllocateInfo allocInfo = {};
-    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    allocInfo.commandPool = m_commandPool;
-    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    allocInfo.commandBufferCount = 1;
-
-    vkAllocateCommandBuffers(m_device, &allocInfo, &commandBuffer);
-
+    // 开始录制命令缓冲区
     VkCommandBufferBeginInfo beginInfo = {};
     beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
     beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(commandBuffer, &beginInfo);
 
-    // 设置清除颜色值
-    VkClearColorValue clearColor = {};
-    clearColor.float32[0] = 0.0f;
-    clearColor.float32[1] = 0.0f;
-    clearColor.float32[2] = 1.0f;
-    clearColor.float32[3] = 1.0f;
+    if (devFuncs->vkBeginCommandBuffer(cmdBuffer, &beginInfo) != VK_SUCCESS) {
+        qFatal("Failed to begin recording command buffer.");
+    }
 
-    VkClearAttachment clearAttachment = {};
-    clearAttachment.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    clearAttachment.clearValue.color = clearColor;
+    // 设置视口
+    VkViewport viewport = {};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = (float)m_window->swapChainImageSize().width();
+    viewport.height = (float)m_window->swapChainImageSize().height();
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
 
-    VkClearRect clearRect = {};
-    clearRect.rect.extent.width = m_window->width();
-    clearRect.rect.extent.height = m_window->height();
-    clearRect.layerCount = 1;
+    devFuncs->vkCmdSetViewport(cmdBuffer, 0, 1, &viewport);
 
-    vkCmdClearAttachments(commandBuffer, 1, &clearAttachment, 1, &clearRect);
+    // 设置剪裁矩形
+    VkRect2D scissor = {};
+    scissor.offset = {0, 0};
+    uint32_t width = m_window->swapChainImageSize().width();
+    uint32_t height = m_window->swapChainImageSize().height();
+    scissor.extent = {width,height};
 
-    // 绘制命令（此处应包括顶点缓冲区和着色器）
+    devFuncs->vkCmdSetScissor(cmdBuffer, 0, 1, &scissor);
 
-    vkEndCommandBuffer(commandBuffer);
+    // 绑定图形管线
+    devFuncs->vkCmdBindPipeline(cmdBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, m_pipeline);
 
-    // 提交命令缓冲区
-    VkSubmitInfo submitInfo = {};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandBuffer;
+    // 绑定顶点缓冲区
+    VkDeviceSize offsets[] = {0};
+    devFuncs->vkCmdBindVertexBuffers(cmdBuffer, 0, 1, &m_vertexBuffer, offsets);
 
-    vkQueueSubmit(m_graphicsQueue, 1, &submitInfo, VK_NULL_HANDLE);
-    vkQueueWaitIdle(m_graphicsQueue);
+    // 绘制三角形
+    devFuncs->vkCmdDraw(cmdBuffer, 3, 1, 0, 0);
+
+    // 结束命令录制
+    if (devFuncs->vkEndCommandBuffer(cmdBuffer) != VK_SUCCESS) {
+        qFatal("Failed to record command buffer.");
+    }
+
+    // 通知 QVulkanWindow 帧准备完成
+    m_window->frameReady();
+    m_window->requestUpdate();
 }
 
